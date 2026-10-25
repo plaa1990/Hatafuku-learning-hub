@@ -1,5 +1,85 @@
-const V='skillhub-v11-6';
-const CORE=['./','index.html','studio.html','lessons.html','fx.js','io.js','studio-ext.js','app.js','app.css','theme.css','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png'];
-self.addEventListener('install',e=>e.waitUntil(caches.open(V).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting())));
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==V).map(x=>caches.delete(x)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(h=>{const n=fetch(e.request).then(r=>{if(r&&r.ok){const c=r.clone();caches.open(V).then(x=>x.put(e.request,c))}return r}).catch(()=>h||caches.match('index.html'));return h||n}))});
+const CACHE_NAME = 'polyglot-v36';
+const APP_FILES = [
+  './',
+  './index.html',
+  './study-features.js',
+  './vocab-tools.js',
+  './study-extras.js',
+  './worksheet-extras.js',
+  './polyglot-vocab.js',
+  './html2canvas.min.js',
+  './draw.html',
+  './draw-studio.html',
+  './manifest.webmanifest',
+  './icon-192.png',
+  './icon-512.png'
+];
+// ไลบรารี/ฟอนต์จากภายนอก: พยายามแคชตอนติดตั้ง ถ้าโหลดไม่ได้ก็ข้ามได้ (ไม่ทำให้การติดตั้งล้ม)
+const EXTERNAL_FILES = [
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'
+];
+const EXTERNAL_HOSTS = [
+  'cdnjs.cloudflare.com',
+  'fonts.googleapis.com',
+  'fonts.gstatic.com'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(APP_FILES);
+    await Promise.all(EXTERNAL_FILES.map(async url => {
+      try {
+        const res = await fetch(new Request(url, { mode: 'no-cors' }));
+        await cache.put(url, res);
+      } catch (e) { /* ออฟไลน์ตอนติดตั้ง: จะแคชเองเมื่อถูกใช้งานครั้งแรกขณะออนไลน์ */ }
+    }));
+  })());
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys => Promise.all(
+      keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
+    ))
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+
+  // ภายนอก (CDN / Google Fonts): ใช้ของในแคชก่อน แล้วอัปเดตเบื้องหลัง
+  if (EXTERNAL_HOSTS.includes(url.hostname)) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(event.request);
+      const network = fetch(event.request).then(res => {
+        if (res && (res.ok || res.type === 'opaque')) cache.put(event.request, res.clone());
+        return res;
+      }).catch(() => null);
+      return cached || (await network) || Response.error();
+    })());
+    return;
+  }
+
+  if (url.origin !== self.location.origin) return;
+
+  // ไฟล์ของแอป: ลองออนไลน์ก่อน ถ้าไม่ได้ใช้แคช
+  event.respondWith(
+    fetch(event.request).then(response => {
+      if (response && response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+      }
+      return response;
+    }).catch(async () => {
+      const cached = await caches.match(event.request);
+      return cached || caches.match('./index.html');
+    })
+  );
+});
